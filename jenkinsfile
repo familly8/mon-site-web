@@ -1,0 +1,210 @@
+pipeline {
+    agent any
+    
+    environment {
+        DEPLOY_PATH = '/var/www/html'
+        SITE_URL = 'http://192.168.12.1'
+    }
+    
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    
+    stages {
+        stage('📥 Checkout Code') {
+            steps {
+                checkout scm
+                echo ' Code source récupéré depuis GitHub'
+                sh 'ls -la'
+            }
+        }
+        
+        stage('🔍 Validation HTML') {
+            steps {
+                script {
+                    echo "Vérification des fichiers HTML..."
+                    def htmlFiles = findFiles(glob: '**/*.html')
+                    if (htmlFiles.length == 0) {
+                        error ' ERREUR: Aucun fichier HTML trouvé!'
+                    }
+                    echo " Fichiers HTML trouvés: ${htmlFiles.length}"
+                    
+                    // Vérifier les fichiers requis
+                    def requiredFiles = ['index.html', 'about.html', 'contact.html']
+                    requiredFiles.each { file ->
+                        if (!fileExists(file)) {
+                            error " ERREUR: Fichier manquant: ${file}"
+                        }
+                        echo " Fichier présent: ${file}"
+                    }
+                }
+            }
+        }
+        
+        stage(' Tests Qualité') {
+            steps {
+                sh '''
+                    echo "Début des tests de qualité..."
+                    
+                    # Vérifier la structure HTML
+                    for file in *.html; do
+                        echo " Test du fichier: $file"
+                        
+                        # Vérifier DOCTYPE
+                        if ! grep -q "<!DOCTYPE html>" "$file"; then
+                            echo " $file: DOCTYPE HTML manquant"
+                            exit 1
+                        fi
+                        
+                        # Vérifier title
+                        if ! grep -q "<title>" "$file"; then
+                            echo " $file: Balise <title> manquante"
+                            exit 1
+                        fi
+                        
+                        # Vérifier charset
+                        if ! grep -q "charset=UTF-8" "$file"; then
+                            echo " $file: charset UTF-8 manquant"
+                            exit 1
+                        fi
+                        
+                        echo " $file: Tests de base passés"
+                    done
+                    
+                    # Vérifier le CSS
+                    if [ -f "assets/style.css" ]; then
+                        echo " Fichier CSS présent"
+                    else
+                        echo " Fichier CSS manquant"
+                        exit 1
+                    fi
+                    
+                    echo " Tous les tests de qualité sont passés!"
+                '''
+            }
+        }
+        
+        stage(' Construction') {
+            steps {
+                echo "Construction de l'application..."
+                sh '''
+                    # Créer un fichier de version
+                    echo "Build: ${BUILD_NUMBER}" > version.txt
+                    echo "Date: $(date)" >> version.txt
+                    echo "Commit: ${GIT_COMMIT}" >> version.txt
+                    
+                    # Créer une archive
+                    tar -czf site-web-build-${BUILD_NUMBER}.tar.gz *.html assets/ version.txt
+                    echo " Archive créée: site-web-build-${BUILD_NUMBER}.tar.gz"
+                '''
+                
+                archiveArtifacts artifacts: 'site-web-build-*.tar.gz', fingerprint: true
+            }
+        }
+        
+        stage(' Déploiement') {
+            steps {
+                script {
+                    echo "Début du déploiement..."
+                    
+                    // Sauvegarde avant déploiement
+                    sh """
+                        echo " Création d'une sauvegarde..."
+                        sudo tar -czf /tmp/site-backup-\$(date +%Y%m%d-%H%M%S).tar.gz -C $DEPLOY_PATH . 2>/dev/null || true
+                    """
+                    
+                    // Nettoyage et déploiement
+                    sh """
+                        echo " Nettoyage du répertoire de déploiement..."
+                        sudo rm -rf $DEPLOY_PATH/*
+                        
+                        echo " Copie des nouveaux fichiers..."
+                        sudo cp -r *.html assets/ $DEPLOY_PATH/
+                        
+                        echo " Ajustement des permissions..."
+                        sudo chown -R www-data:www-data $DEPLOY_PATH
+                        sudo chmod -R 755 $DEPLOY_PATH
+                        
+                        echo " Redémarrage de NGINX..."
+                        sudo systemctl reload nginx
+                    """
+                }
+            }
+        }
+        
+        stage(' Vérification') {
+            steps {
+                script {
+                    echo "Vérification du déploiement..."
+                    
+                    // Attendre que le site soit disponible
+                    sh '''
+                        echo " Attente de la disponibilité du site..."
+                        for i in {1..10}; do
+                            if curl -f http://192.168.12.1/ > /dev/null 2>&1; then
+                                echo " Site accessible!"
+                                break
+                            fi
+                            echo "Tentative $i/10..."
+                            sleep 3
+                        done
+                    '''
+                    
+                    // Tester toutes les pages
+                    def pages = ["", "about.html", "contact.html"]
+                    pages.each { page ->
+                        sh """
+                            if curl -f "http://192.168.12.1/${page}" > /dev/null 2>&1; then
+                                echo " Page accessible: ${page}"
+                            else
+                                echo " Page inaccessible: ${page}"
+                                exit 1
+                            fi
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo " Construction #${BUILD_NUMBER} terminée - ${currentBuild.result}"
+            publishHTML([
+                allowMissing: false,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'index.html',
+                reportName: 'Aperçu du Site'
+            ])
+        }
+        success {
+            echo " DÉPLOIEMENT RÉUSSI!"
+            sh '''
+                echo "=========================================="
+                echo " SITE WEB ACCESSIBLE"
+                echo "=========================================="
+                echo "URL: http://$(curl -s ifconfig.me || echo "localhost")"
+                echo "Build: ${BUILD_NUMBER}"
+                echo "Date: $(date)"
+                echo "=========================================="
+            '''
+        }
+        failure {
+            echo " DÉPLOIEMENT ÉCHOUÉ!"
+            // Tentative de restauration
+            sh '''
+                echo " Tentative de restauration depuis la sauvegarde..."
+                sudo tar -tzf /tmp/site-backup-*.tar.gz > /dev/null 2>&1 && \\
+                sudo tar -xzf /tmp/site-backup-*.tar.gz -C /var/www/html/ && \\
+                sudo systemctl reload nginx && \\
+                echo " Restauration effectuée" || echo " Aucune sauvegarde disponible"
+            '''
+        }
+        unstable {
+            echo " Construction instable"
+        }
+    }
+}

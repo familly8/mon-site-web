@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accueil - Mon Site CI/CD</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav container">
+            <h1>MonSite CI/CD</h1>
+            <ul class="nav-links">
+                <li><a href="index.html">Accueil</a></li>
+                <li><a href="about.html">À propos</a></li>
+                <li><a href="contact.html">Contact</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <section class="hero">
+        <div class="container">
+            <h2>Bienvenue sur notre site</h2>
+            <p>Ce site est déployé automatiquement via Jenkins CI/CD</p>
+            <p>Build: <!-- BUILD_INFO --></p>
+            <p style="color: green; font-weight: bold;"> Déployé avec succès</p>
+        </div>
+    </section>
+
+    <main class="container">
+        <section class="content">
+            <h3>Notre Système CI/CD</h3>
+            <div class="features">
+                <div class="feature">
+                    <h4> Déploiement Automatique</h4>
+                    <p>Chaque modification déclenche un nouveau déploiement</p>
+                </div>
+                <div class="feature">
+                    <h4> Tests Automatisés</h4>
+                    <p>Validation automatique du code avant déploiement</p>
+                </div>
+                <div class="feature">
+                    <h4> Monitoring</h4>
+                    <p>Surveillance continue des performances</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>&copy; 2024 MonSite CI/CD. Tous droits réservés.</p>
+        <p>Dernier déploiement: <span id="date"></span></p>
+    </footer>
+
+    <script>
+        document.getElementById('date').textContent = new Date().toLocaleString();
+    </script>
+</body>
+</html>
